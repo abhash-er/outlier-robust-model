@@ -1,0 +1,15 @@
+batch_size: 32
+config_type: example
+
+data_path: data
+dataset: cifar10
+
+cutout: true
+cutout_length: 16
+cutout_prob: 1.0
+
+meta_train_fraction: 0.7
+out_dir: run
+seed: 1
+total_steps: 1000
+train_portion: 0.7

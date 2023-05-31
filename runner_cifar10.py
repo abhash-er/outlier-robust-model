@@ -4,8 +4,6 @@ from abc import ABC
 import torch
 import sys
 
-# TODO Remove this after creating setup.py
-sys.path.insert(1, '/Users/abhash/Desktop/WS2022/Master Project/outlier-robust-model')
 
 from betty.configs import Config, EngineConfig
 from betty.engine import Engine

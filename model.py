@@ -35,8 +35,7 @@ class TrainProblem(ImplicitProblem):
 
         # Use categorical loss function type
         loss = self.loss_function(labels, outputs)
-        loss = torch.dot(weights, loss).mean()
-
+        loss = torch.dot(weights.squeeze(-1), loss).mean()
         self.train_loss_meter.update(loss.item())
         self.train_loss_meter.save()
         return loss
@@ -76,7 +75,7 @@ class MetaProblem(ImplicitProblem):
     def training_step(self, batch):
         images, labels = batch
         output = self.train_learner(images)
-        loss = self.loss_function(output, labels)
+        loss = self.loss_function(labels, output)
         self.meta_loss_meter.update(loss.item())
         self.meta_loss_meter.save()
         return loss
@@ -109,6 +108,10 @@ def get_resnet_embedding(num_classes=10, freeze_layers=True, hidden_layer_size=5
         torch.nn.Linear(in_features=hidden_layer_size, out_features=num_classes),
         torch.nn.Softmax(),
     )
+
+    for param in resnet18.fc.parameters():
+        param.requires_grad = True
+
     return resnet18
 
 
@@ -127,6 +130,10 @@ class OutlierDetectionModel(torch.nn.Module):
             torch.nn.Linear(in_features=n_in, out_features=hidden_layer_size),
         )
 
+        # Enable gradients for back propogation
+        for param in self.image_encoder.fc.parameters():
+            param.requires_grad = True
+
         self.label_encoder = torch.nn.Sequential(
             torch.nn.Linear(in_features=n_classes, out_features=hidden_layer_size // 2),
             torch.nn.Linear(in_features=hidden_layer_size // 2, out_features=hidden_layer_size)
@@ -140,7 +147,8 @@ class OutlierDetectionModel(torch.nn.Module):
 
     def forward(self, images, labels):
         image_enc = self.image_encoder(images)
-        labels = torch.nn.functional.one_hot(labels, num_classes=self.num_classes).float()
+        with torch.no_grad():
+            labels = torch.nn.functional.one_hot(labels, num_classes=self.num_classes).float()
         label_enc = self.label_encoder(labels)
         full_enc = torch.cat((image_enc, label_enc), -1)
         return self.final_layer(full_enc)
@@ -155,7 +163,15 @@ if __name__ == "__main__":
     print(label)
 
     resnet_op = resnet(image)
+    loss_fn = torch.nn.CrossEntropyLoss()
+    res_loss = loss_fn(resnet_op, label)
+    res_loss.backward()
+    print(res_loss)
     print(resnet_op)
 
     outlier_prob = outlier_model(image, label)
-    print(outlier_prob)
+    outlier_score = torch.rand((10,1))
+    print(outlier_score)
+    outlier_loss = torch.nn.functional.mse_loss(outlier_prob, outlier_score)
+    print(outlier_loss)
+    outlier_loss.backward()

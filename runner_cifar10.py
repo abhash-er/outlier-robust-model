@@ -28,7 +28,7 @@ args = get_other_args()
 
 class MyTrainProblem(TrainProblem, ABC):
     def loss_function(self, labels, outputs):
-        loss_fn = torch.nn.CrossEntropyLoss()
+        loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
         return loss_fn(outputs, labels)
 
     def configure_module(self):

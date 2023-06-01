@@ -7,7 +7,6 @@ from fvcore.common.config import CfgNode
 from matplotlib import pyplot as plt
 
 from utils.dataset import get_loaders
-
 logger = logging.getLogger(__name__)
 
 

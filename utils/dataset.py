@@ -33,6 +33,7 @@ def get_loaders(config):
             root=data_path, train=False, download=True, transform=valid_transform
         )
     else:
+        # TODO Add more datasets
         raise ValueError("Unknown dataset: {}".format(dataset))
 
     num_train = len(train_data)
@@ -82,7 +83,7 @@ def get_loaders(config):
     return train_queue, valid_queue, meta_queue, test_queue, train_transform, meta_transform, valid_transform
 
 
-def _data_transforms_cifar10(args):
+def _data_transforms_cifar10(config):
     CIFAR_MEAN = [0.49139968, 0.48215827, 0.44653124]
     CIFAR_STD = [0.24703233, 0.24348505, 0.26158768]
 
@@ -95,9 +96,9 @@ def _data_transforms_cifar10(args):
         ]
     )
 
-    if hasattr(args, 'cutout') and args.cutout:
+    if hasattr(config, 'cutout') and config.cutout:
         train_transform.transforms.append(
-            Cutout(args.cutout_length, args.cutout_prob))
+            Cutout(config.cutout_length, config.cutout_prob))
 
     valid_transform = transforms.Compose(
         [

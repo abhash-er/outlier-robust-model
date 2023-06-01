@@ -11,5 +11,5 @@ cutout_prob: 1.0
 meta_train_fraction: 0.7
 out_dir: run
 seed: 1
-total_steps: 1000
+total_steps: 5
 train_portion: 0.7

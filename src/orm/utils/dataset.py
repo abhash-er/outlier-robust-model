@@ -1,25 +1,30 @@
-import numpy as np
-import random
-import torch
-import torchvision.datasets as dset
-from torchvision.transforms import transforms
+from __future__ import annotations
+
 import json
-from fvcore.common.config import CfgNode
+import random
+
+from fvcore.common.config import CfgNode  # type: ignore
+import numpy as np
+import torch
 from torch.utils.data import Dataset
-from cifar100_mappings import get_cifar100_mappings_dict
-import modified_cifar100
+import torchvision.datasets as dset  # type: ignore
+from torchvision.transforms import transforms  # type: ignore
+
+from .cifar100_mappings import get_cifar100_mappings_dict
+from .modified_cifar100 import CIFAR100
 
 CIFAR100_to_CIFAR10 = {
-    "Train" : 9, # Truck
-    "Bicycle" : 1, # Automobile 
-    "Rocket":0, # Airplane
-    "Butterfly": 0, # Airplane 
-    "Lion": 3, # Cat
-    "Camel": 7, # Horse
-    "Kangaroo": 5, # Dog
+    "Train": 9,  # Truck
+    "Bicycle": 1,  # Automobile
+    "Rocket": 0,  # Airplane
+    "Butterfly": 0,  # Airplane
+    "Lion": 3,  # Cat
+    "Camel": 7,  # Horse
+    "Kangaroo": 5,  # Dog
 }
 
-def get_loaders(config: CfgNode):
+
+def get_loaders(config: CfgNode) -> tuple:
     data_path = config.data_path
     dataset = config.dataset
     batch_size = config.batch_size
@@ -34,14 +39,21 @@ def get_loaders(config: CfgNode):
         source_data = dset.CIFAR10(
             root=data_path, train=True, download=True, transform=train_transform
         )
-        injection_data = modified_cifar100.CIFAR100(root=data_path, train=True, 
-                                  transform=injection_train_transform, download=True,
-                                  coarse=True)
-        
-        dataset_container = OutlierPlusDataset(source_data, injection_data,
-                                               train_portion= train_portion,
-                                               train_meta_portion=train_meta_fraction)
-        
+        injection_data = CIFAR100(
+            root=data_path,
+            train=True,
+            transform=injection_train_transform,
+            download=True,
+            coarse=True,
+        )
+
+        dataset_container = OutlierPlusDataset(
+            source_data,
+            injection_data,
+            train_portion=train_portion,
+            train_meta_portion=train_meta_fraction,
+        )
+
         train_data = CustomDataset(dataset_container, mode="train")
         meta_data = CustomDataset(dataset_container, mode="meta")
         valid_data = CustomDataset(dataset_container, mode="valid")
@@ -51,8 +63,7 @@ def get_loaders(config: CfgNode):
         )
     else:
         # TODO Add more datasets
-        raise ValueError("Unknown dataset: {}".format(dataset))
-
+        raise ValueError(f"Unknown dataset: {dataset}")
 
     train_queue = torch.utils.data.DataLoader(
         train_data,
@@ -106,18 +117,19 @@ def get_loaders(config: CfgNode):
         valid_transform,
     )
 
+
 # This should be initialized only once to save memory
-class OutlierPlusDataset():
-    def __init__(
+class OutlierPlusDataset:
+    def __init__(  # noqa: C901, PLR0915
         self,
         source_data: Dataset,
         injection_data: Dataset,
-        train_portion: int = 0.7,  # Train - 70%, Meta - 30 % 
-        outlier_portion: int = 0.3,
-        train_meta_portion: int = 0.8, # Train & Meta - 80 %,  Valid - 20 %
+        train_portion: float = 0.7,  # Train - 70%, Meta - 30 %
+        outlier_portion: float = 0.3,
+        train_meta_portion: float = 0.8,  # Train & Meta - 80 %,  Valid - 20 %
         is_negative_label: bool = True,
-        shuffle_portion: int = 0.15
-    ):
+        shuffle_portion: float = 0.15,
+    ) -> None:
         # Both train and meta should contain outlier examples
         self.train_images = []
         self.train_labels = []
@@ -134,7 +146,7 @@ class OutlierPlusDataset():
         self.outlier_valid_labels = []
 
         # Create loaders
-        num_train = len(source_data)
+        num_train = len(source_data)  # type: ignore
         indices = list(range(num_train))
         train_meta_split = int(np.floor(train_meta_portion * num_train))
         injection_split = int(np.floor(outlier_portion * train_meta_split))
@@ -166,7 +178,7 @@ class OutlierPlusDataset():
         injection_loader_valid = torch.utils.data.DataLoader(
             injection_data,
             sampler=torch.utils.data.sampler.SubsetRandomSampler(
-                indices[injection_split:injection_split + 1000]
+                indices[injection_split : injection_split + 1000]
             ),
             batch_size=1,
             pin_memory=True,
@@ -184,17 +196,18 @@ class OutlierPlusDataset():
 
         # Shuffle data
         if is_negative_label:
-            shuffle_idx = random.sample(list(range(0, train_meta_split)),
-                                        int(np.floor(shuffle_portion * train_meta_split)
-                                        ))
-            
+            shuffle_idx = random.sample(
+                list(range(train_meta_split)),
+                int(np.floor(shuffle_portion * train_meta_split)),
+            )
+
             for idx in shuffle_idx:
                 label = labels[idx].item()
                 classes = list(range(10))
                 classes.remove(label)
                 new_label = random.choice(classes)
                 labels[idx] = torch.tensor(new_label)
-            
+
         # Inject data
         # Note: it is not gauranteed that all the data would be injected
         id_fine, id_coarse = get_cifar100_mappings_dict()
@@ -202,28 +215,32 @@ class OutlierPlusDataset():
             image = image[0]
             fine_label = fine_label[0]
             coarse_label = coarse_label[0]
-            if id_coarse[coarse_label.item()] in ["vehicles 1","vehicles 2"] and \
-                id_fine[fine_label.item()] not in ["Train", "Bicycle", "Rocket"]:
-                continue 
-            
+            if id_coarse[coarse_label.item()] in [
+                "vehicles 1",
+                "vehicles 2",
+            ] and id_fine[fine_label.item()] not in ["Train", "Bicycle", "Rocket"]:
+                continue
+
             # Almost same but different
             if id_fine[fine_label.item()] in CIFAR100_to_CIFAR10:
                 images.append(image)
-                labels.append(torch.tensor(CIFAR100_to_CIFAR10[id_fine[fine_label.item()]]))
+                labels.append(
+                    torch.tensor(CIFAR100_to_CIFAR10[id_fine[fine_label.item()]])
+                )
             else:
                 images.append(image)
-                labels.append(torch.tensor(random.randint(0,9)))
-    
+                labels.append(torch.tensor(random.randint(0, 9)))
+
         # Distribute this data
         split_idx = int(np.floor(train_portion * len(images)))
-        images = np.array(images)
-        labels = np.array(labels)
+        images = np.array(images)  # type: ignore
+        labels = np.array(labels)  # type: ignore
 
-        idx_to_shuffle = list(range(0, len(images)))
+        idx_to_shuffle = list(range(len(images)))
         random.shuffle(idx_to_shuffle)
-        images = images[idx_to_shuffle]
-        labels = labels[idx_to_shuffle]
-        
+        images = images[idx_to_shuffle]  # type: ignore
+        labels = labels[idx_to_shuffle]  # type: ignore
+
         self.train_images = images[:split_idx]
         self.train_labels = labels[:split_idx]
 
@@ -241,65 +258,75 @@ class OutlierPlusDataset():
             image = image[0]
             fine_label = fine_label[0]
             coarse_label = coarse_label[0]
-            if id_coarse[coarse_label.item()] in ["vehicles 1","vehicles 2"] and \
-                  id_fine[fine_label.item()] not in ["Train", "Bicycle", "Rocket"]:
-                 continue 
-            
+            if id_coarse[coarse_label.item()] in [
+                "vehicles 1",
+                "vehicles 2",
+            ] and id_fine[fine_label.item()] not in ["Train", "Bicycle", "Rocket"]:
+                continue
+
             # Almost same but different
             if id_fine[fine_label.item()] in CIFAR100_to_CIFAR10:
                 self.outlier_valid_images.append(image)
-                self.outlier_valid_labels.append(torch.tensor(CIFAR100_to_CIFAR10[id_fine[fine_label.item()]]))
+                self.outlier_valid_labels.append(
+                    torch.tensor(CIFAR100_to_CIFAR10[id_fine[fine_label.item()]])
+                )
             else:
                 self.outlier_valid_images.append(image)
-                self.outlier_valid_labels.append(torch.tensor(random.randint(0,9)))
-    
-    def get_train_data(self):
-        return self.train_images, self.train_labels
+                self.outlier_valid_labels.append(torch.tensor(random.randint(0, 9)))
 
-    def get_meta_data(self):
-        return self.meta_images, self.meta_labels
-    
-    def get_valid_data(self):
-        return self.valid_images, self.valid_labels
+    def get_train_data(self) -> tuple[np.ndarray, np.ndarray]:
+        return self.train_images, self.train_labels  # type: ignore
 
-    def get_outlier_valid_data(self):
-        return self.outlier_valid_images, self.outlier_valid_labels
+    def get_meta_data(self) -> tuple[np.ndarray, np.ndarray]:
+        return self.meta_images, self.meta_labels  # type: ignore
 
-        
+    def get_valid_data(self) -> tuple[np.ndarray, np.ndarray]:
+        return self.valid_images, self.valid_labels  # type: ignore
+
+    def get_outlier_valid_data(self) -> tuple[np.ndarray, np.ndarray]:
+        return self.outlier_valid_images, self.outlier_valid_labels  # type: ignore
+
+
 class CustomDataset(Dataset):
     def __init__(
         self,
         dataset_container: OutlierPlusDataset,
-        mode: str = "train", # Supports 4 mode -> "train", "meta", "valid", "outlier_valid"
-    ):
-        assert mode in ["train", "meta", "valid", "outlier_valid"], \
-                    "Please enter a mode among train, meta, val, outlier_val"
+        mode: str = "train",
+    ) -> None:
+        assert mode in [
+            "train",
+            "meta",
+            "valid",
+            "outlier_valid",
+        ], "Please enter a mode among train, meta, val, outlier_val"
 
         if mode == "train":
             images, labels = dataset_container.get_train_data()
-        
+
         if mode == "meta":
             images, labels = dataset_container.get_meta_data()
-        
+
         if mode == "valid":
             images, labels = dataset_container.get_valid_data()
-        
+
         if mode == "outlier_valid":
             images, labels = dataset_container.get_outlier_valid_data()
-        
-        self.images = images
-        self.labels = labels 
 
-    def __len__(self):
+        self.images = images
+        self.labels = labels
+
+    def __len__(self) -> int:
         return len(self.labels)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> tuple[np.ndarray, np.ndarray]:
         image = self.images[idx]
         label = self.labels[idx]
         return image, label
 
 
-def _data_transforms_cifar10(config: CfgNode):
+def _data_transforms_cifar10(
+    config: CfgNode,
+) -> tuple[transforms.Compose, transforms.Compose]:
     CIFAR_MEAN = [0.49139968, 0.48215827, 0.44653124]
     CIFAR_STD = [0.24703233, 0.24348505, 0.26158768]
 
@@ -326,7 +353,9 @@ def _data_transforms_cifar10(config: CfgNode):
     return train_transform, valid_transform
 
 
-def _data_transforms_cifar100(args: CfgNode):
+def _data_transforms_cifar100(
+    args: CfgNode,
+) -> tuple[transforms.Compose, transforms.Compose]:
     CIFAR_MEAN = [0.5071, 0.4865, 0.4409]
     CIFAR_STD = [0.2673, 0.2564, 0.2762]
 
@@ -340,7 +369,7 @@ def _data_transforms_cifar100(args: CfgNode):
     )
 
     if hasattr(args, "cutout") and args.cutout:
-            train_transform.transforms.append(Cutout(args.cutout_length, args.cutout_prob))
+        train_transform.transforms.append(Cutout(args.cutout_length, args.cutout_prob))
 
     valid_transform = transforms.Compose(
         [
@@ -351,14 +380,14 @@ def _data_transforms_cifar100(args: CfgNode):
     return train_transform, valid_transform
 
 
-class Cutout(object):
-    def __init__(self, length, prob=1.0):
+class Cutout:
+    def __init__(self, length: int, prob: float = 1.0) -> None:
         self.length = length
         self.prob = prob
 
-    def __call__(self, img):
+    def __call__(self, img: torch.Tensor) -> torch.Tensor:
         if np.random.binomial(1, self.prob):
-            h, w = img.size(1), img.size(2)
+            h, w = img.size(1), img.size(2)  # type: ignore
             mask = np.ones((h, w), np.float32)
             y = np.random.randint(h)
             x = np.random.randint(w)
@@ -369,8 +398,8 @@ class Cutout(object):
             x2 = np.clip(x + self.length // 2, 0, w)
 
             mask[y1:y2, x1:x2] = 0.0
-            mask = torch.from_numpy(mask)
-            mask = mask.expand_as(img)
+            mask = torch.from_numpy(mask)  # type: ignore
+            mask = mask.expand_as(img)  # type: ignore
             img *= mask
         return img
 
@@ -396,7 +425,6 @@ if __name__ == "__main__":
         meta_transform,
         valid_transform,
     ) = get_loaders(config)
-
     for batch in train_queue:
         image, label = batch
         print(image.shape)

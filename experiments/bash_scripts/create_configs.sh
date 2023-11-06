@@ -25,7 +25,7 @@ end_seed=$(($start_seed + $trials - 1))
 # create config files
 for i in $(seq $start_seed $end_seed)
   do
-    python experiments/scripts/make_configs.py --start_seed $i \
+    python experiments/make_configs.py --start_seed $i \
     --out_dir $out_dir --dataset=$dataset \
     --experiment outlier_robust --config_root=$config_root --data_path=$data_path
 done

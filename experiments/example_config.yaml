@@ -1,15 +1,12 @@
 batch_size: 32
-config_type: example
-
-data_path: data
-dataset: cifar10
-
+config_type: outlier_robust
 cutout: true
 cutout_length: 16
 cutout_prob: 1.0
-
-meta_train_fraction: 0.7
+data_path: data
+dataset: cifar10
 out_dir: run
-seed: 1
+seed: 0
 total_steps: 5
+train_meta_fraction: 0.7
 train_portion: 0.7

@@ -53,6 +53,13 @@ class TrainProblem(ImplicitProblem):
         self.train_loss_meter.save()
         return loss
 
+    def trainable_parameters(self) -> list[torch.nn.Parameter]:
+        trainable_params = []
+        for param in self.module.parameters():
+            if param.requires_grad:
+                trainable_params.append(param)
+        return trainable_params
+
 
 class MetaProblem(ImplicitProblem):
     def __init__(
@@ -117,6 +124,13 @@ class MetaProblem(ImplicitProblem):
                 print("My predicted output is :", out)
                 print("My target label is:", target)
 
+    def trainable_parameters(self) -> list[torch.nn.Parameter]:
+        trainable_params = []
+        for param in self.module.parameters():
+            if param.requires_grad:
+                trainable_params.append(param)
+        return trainable_params
+
 
 def get_resnet_embedding(
     num_classes: int = 10, freeze_layers: bool = True, hidden_layer_size: int = 512
@@ -132,7 +146,7 @@ def get_resnet_embedding(
     resnet18.fc = torch.nn.Sequential(
         torch.nn.Linear(in_features=n_in, out_features=hidden_layer_size),
         torch.nn.Linear(in_features=hidden_layer_size, out_features=num_classes),
-        torch.nn.Softmax(),
+        torch.nn.Softmax(dim=1),
     )
 
     for param in resnet18.fc.parameters():
@@ -204,13 +218,13 @@ if __name__ == "__main__":
     resnet_op = resnet(image)
     loss_fn = torch.nn.CrossEntropyLoss()
     res_loss = loss_fn(resnet_op, label)
-    res_loss.backward()
+    res_loss.backward(retain_graph=True)
     print(res_loss)
     print(resnet_op)
 
     outlier_prob = outlier_model(image, label)
     outlier_score = torch.rand((10, 1))
-    print(outlier_score)
+    print(outlier_prob)
     outlier_loss = torch.nn.functional.mse_loss(outlier_prob, outlier_score)
     print(outlier_loss)
-    outlier_loss.backward()
+    outlier_loss.backward(retain_graph=True)

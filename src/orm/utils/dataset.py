@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import pickle
 import random
 
 from fvcore.common.config import CfgNode  # type: ignore
@@ -17,7 +19,6 @@ CIFAR100_to_CIFAR10 = {
     "Train": 9,  # Truck
     "Bicycle": 1,  # Automobile
     "Rocket": 0,  # Airplane
-    "Butterfly": 0,  # Airplane
     "Lion": 3,  # Cat
     "Camel": 7,  # Horse
     "Kangaroo": 5,  # Dog
@@ -404,6 +405,56 @@ class Cutout:
         return img
 
 
+def load_dataset(config: CfgNode) -> tuple:
+    if os.path.exists("data/cifar10_augmented.pickle"):
+        with open("data/cifar10_augmented.pickle", "rb") as f:
+            augmented_dataset = pickle.load(f)
+
+        train_queue = augmented_dataset["train_queue"]
+        meta_queue = augmented_dataset["meta_queue"]
+        valid_queue = augmented_dataset["valid_queue"]
+        outlier_valid_queue = augmented_dataset["outlier_valid_queue"]
+        test_queue = augmented_dataset["test_queue"]
+        train_transform = augmented_dataset["train_transform"]
+        meta_transform = augmented_dataset["meta_transform"]
+        valid_transform = augmented_dataset["valid_transform"]
+    else:
+        (
+            train_queue,
+            meta_queue,
+            valid_queue,
+            outlier_valid_queue,
+            test_queue,
+            train_transform,
+            meta_transform,
+            valid_transform,
+        ) = get_loaders(config)
+
+        augmented_dataset = {
+            "train_queue": train_queue,
+            "meta_queue": meta_queue,
+            "valid_queue": valid_queue,
+            "outlier_valid_queue": outlier_valid_queue,
+            "test_queue": test_queue,
+            "train_transform": train_transform,
+            "meta_transform": meta_transform,
+            "valid_transform": valid_transform,
+        }
+        with open("data/cifar10_augmented.pickle", "wb") as f:
+            pickle.dump(augmented_dataset, f)
+
+    return (
+        train_queue,
+        meta_queue,
+        valid_queue,
+        outlier_valid_queue,
+        test_queue,
+        train_transform,
+        meta_transform,
+        valid_transform,
+    )
+
+
 if __name__ == "__main__":
     # Sanity Check
     config = {
@@ -424,8 +475,14 @@ if __name__ == "__main__":
         train_transform,
         meta_transform,
         valid_transform,
-    ) = get_loaders(config)
+    ) = load_dataset(config)
     for batch in train_queue:
+        image, label = batch
+        print(image.shape)
+        print(label)
+        break
+
+    for batch in outlier_valid_queue:
         image, label = batch
         print(image.shape)
         print(label)

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .arg_parse import get_config_from_args, logger
-from .dataset import get_loaders
+from .arg_parse import get_config_from_args
+from .dataset import get_loaders, load_dataset
 
 
 class AverageMeter:
@@ -30,5 +30,5 @@ class AverageMeter:
 __all__ = [
     "get_loaders",
     "get_config_from_args",
-    "logger",
+    "load_dataset",
 ]

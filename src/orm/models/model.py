@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import logging
 from typing import Any
 
 from betty.configs import Config  # type: ignore
@@ -9,6 +10,7 @@ import torch
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 import torchvision  # type: ignore
+import wandb
 
 from orm.utils import AverageMeter  # type: ignore
 
@@ -24,11 +26,16 @@ class TrainProblem(ImplicitProblem):
         train_data_loader: DataLoader | None = None,
         device: str | None = None,
         loss_meter: AverageMeter = None,
+        is_wandb_log: bool = False,
     ) -> None:
         super().__init__(
             name, config, module, optimizer, scheduler, train_data_loader, device
         )
         self.train_loss_meter = loss_meter
+        self.loader_len = len(train_data_loader)  # type: ignore
+        self.step_num = 0
+        self.epoch_num = 0
+        self.is_wandb_log = is_wandb_log
 
     @abc.abstractmethod
     def loss_function(
@@ -42,6 +49,7 @@ class TrainProblem(ImplicitProblem):
         return self.module(x)  # type: ignore
 
     def training_step(self, batch: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        self.module.train()
         images, labels = batch
         outputs = self.forward(images)
         weights = self.meta_learner(images, labels)
@@ -51,6 +59,30 @@ class TrainProblem(ImplicitProblem):
         loss = torch.dot(weights.squeeze(-1), loss).mean()
         self.train_loss_meter.update(loss.item())
         self.train_loss_meter.save()
+        self.step_num += 1
+        if self.step_num % self.loader_len == 0:
+            if self.is_wandb_log:
+                wandb.log(  # type: ignore
+                    {"train/loss_per_epochs": self.train_loss_meter.avg}
+                )
+                wandb.log({"train/epochs": self.epoch_num})  # type: ignore
+
+            logging.info(
+                f"[TrainProblem] Epoch {self.epoch_num}: \
+                    Training loss is {self.train_loss_meter.avg}"
+            )
+            self.epoch_num += 1
+        # logging.info(
+        #     f"[Train Problem]: train/step: {self.step_num}, train/loss: \
+        #              {self.train_loss_meter.avg}"
+        # )
+        if self.is_wandb_log:
+            log_dict = {
+                "train/step": self.step_num,
+                "train/loss": self.train_loss_meter.avg,
+            }
+            wandb.log(log_dict)  # type: ignore
+
         return loss
 
     def trainable_parameters(self) -> list[torch.nn.Parameter]:
@@ -59,6 +91,9 @@ class TrainProblem(ImplicitProblem):
             if param.requires_grad:
                 trainable_params.append(param)
         return trainable_params
+
+    def save_chekpoints(self) -> None:
+        pass
 
 
 class MetaProblem(ImplicitProblem):
@@ -74,6 +109,7 @@ class MetaProblem(ImplicitProblem):
         test_data_loader: DataLoader | None = None,
         device: str | None = None,
         loss_meter: AverageMeter = AverageMeter(),  # noqa: B008
+        is_wandb_log: bool = False,
     ):
         super().__init__(
             name, config, module, optimizer, scheduler, train_data_loader, device
@@ -82,6 +118,10 @@ class MetaProblem(ImplicitProblem):
         self.val_data_loader = val_data_loader
         self.test_data_loader = test_data_loader
         self.val_results: dict[Any, Any] = {}
+        self.step_num = 0
+        self.epoch_num = 0
+        self.loader_len = len(train_data_loader)  # type: ignore
+        self.is_wandb_log = is_wandb_log
 
     @abc.abstractmethod
     def loss_function(
@@ -99,21 +139,43 @@ class MetaProblem(ImplicitProblem):
         return self.module(images, labels)  # type: ignore
 
     def training_step(self, batch: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        self.module.train()
         images, labels = batch
         output = self.train_learner(images)
         loss = self.loss_function(labels, output)
         self.meta_loss_meter.update(loss.item())
         self.meta_loss_meter.save()
+        self.step_num += 1
+        if self.step_num % self.loader_len == 0:
+            logging.info(
+                f"[MetaProblem] Epoch {self.epoch_num}: Training Loss is \
+                    {self.meta_loss_meter.avg}"
+            )
+            if self.is_wandb_log:
+                wandb.log(  # type: ignore
+                    {"meta/loss_per_epoch": self.meta_loss_meter.avg}
+                )
+            self.log_validate()
+            self.epoch_num += 1
+        if self.is_wandb_log:
+            log_dict = {
+                "meta/step": self.step_num,
+                "meta/loss": self.meta_loss_meter.avg,
+            }
+            wandb.log(log_dict)  # type: ignore
         return loss
 
     # FIXME Update the validate function to do something better
-    def validate(self) -> None:
+    def validate(self) -> tuple[float, float]:
+        self.train_learner.module.eval()
         assert self.val_data_loader is not None
         with torch.no_grad():
             for batch in self.val_data_loader:
                 images, labels = batch
+                images, labels = images.to(self.device), labels.to(self.device)
                 out = self.train_learner(images)  # noqa: F841
                 grid = torchvision.utils.make_grid(images)  # noqa: F841
+        return 0, 0
 
     def test(self) -> None:
         assert self.test_data_loader is not None
@@ -130,6 +192,27 @@ class MetaProblem(ImplicitProblem):
             if param.requires_grad:
                 trainable_params.append(param)
         return trainable_params
+
+    def log_validate(self) -> None:
+        if self.step_num % self.loader_len == 0:
+            log_dict = {"meta/epochs": self.epoch_num}
+
+            validate = getattr(self, "validate", None)
+            if validate is not None and callable(validate):
+                val_loss, val_acc = self.validate()
+                log_dict.update(
+                    {
+                        "validate/acc": val_acc,  # type: ignore
+                        "validate/loss": val_loss,  # type: ignore
+                    }
+                )
+
+            logging.info(
+                f"[MetaProblem] Epoch {self.epoch_num} -- validation loss is \
+                {val_loss},validation accuracy is {val_acc}"
+            )
+            if self.is_wandb_log:
+                wandb.log(log_dict)  # type: ignore
 
 
 def get_resnet_embedding(

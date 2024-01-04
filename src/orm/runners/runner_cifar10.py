@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from abc import ABC
 import argparse
+import logging
 
 from betty.configs import Config, EngineConfig  # type: ignore
 from betty.engine import Engine  # type: ignore
 import torch
 from torch.optim.lr_scheduler import LRScheduler
+import wandb
 
 from orm.models import (  # type: ignore
     MetaProblem,
@@ -14,10 +16,11 @@ from orm.models import (  # type: ignore
     TrainProblem,
     get_resnet_embedding,
 )
-from orm.utils import AverageMeter, get_config_from_args, get_loaders  # type: ignore
-
-config = get_config_from_args()
-print(config)
+from orm.utils import (
+    AverageMeter,
+    get_config_from_args,
+)
+from orm.utils.dataset import load_dataset
 
 
 def get_other_args() -> argparse.Namespace:
@@ -87,8 +90,21 @@ class MyMetaProblem(MetaProblem, ABC):
         return lr_scheduler
 
 
+def setup_logging() -> logging.Logger:
+    logging.basicConfig(
+        filename="logs/cifar10_run.log", encoding="utf-8", level=logging.INFO
+    )
+    logger = logging.getLogger(__name__)
+    return logger
+
+
 if __name__ == "__main__":
     # Get the dataset and splits
+    parser = argparse.ArgumentParser("ORM Searh for modified CIFAR10", add_help=False)
+    parser.add_argument("--seed", default=444, type=int)
+    parser_args = parser.parse_args()
+    logger = setup_logging()
+    config = get_config_from_args(logger=logger)
     (
         train_queue,
         meta_queue,
@@ -98,7 +114,7 @@ if __name__ == "__main__":
         train_transform,
         meta_transform,
         valid_transform,
-    ) = get_loaders(config)
+    ) = load_dataset(config)
 
     # prepare meters
     train_loss_meter = AverageMeter()
@@ -106,12 +122,18 @@ if __name__ == "__main__":
 
     device = "cpu"
     trainer_config = Config(type="darts", unroll_steps=1)
+    wandb_log = False
+
+    if wandb_log:
+        wandb.init(project="OrmModel")  # type: ignore
+
     trainer_problem = MyTrainProblem(
         name="train_learner",
         train_data_loader=train_queue,
         config=trainer_config,
         device=device,
         loss_meter=train_loss_meter,
+        is_wandb_log=wandb_log,
     )
 
     meta_config = Config(type="darts", unroll_steps=1)
@@ -123,8 +145,8 @@ if __name__ == "__main__":
         config=meta_config,
         device=device,
         loss_meter=val_loss_meter,
+        is_wandb_log=wandb_log,
     )
-
     # Setup the engine and dependencies
     engine_config = EngineConfig(train_iters=config.total_steps)
 

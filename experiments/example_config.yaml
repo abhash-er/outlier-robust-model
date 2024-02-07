@@ -7,6 +7,6 @@ data_path: data
 dataset: cifar10
 out_dir: run
 seed: 0
-total_steps: 1000
+total_steps: 10000
 train_meta_fraction: 0.7
 train_portion: 0.7

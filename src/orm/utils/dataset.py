@@ -84,7 +84,7 @@ def get_loaders(config: CfgNode) -> tuple:
 
     valid_queue = torch.utils.data.DataLoader(
         valid_data,
-        batch_size=1,
+        batch_size=batch_size,
         pin_memory=True,
         num_workers=0,
         worker_init_fn=np.random.seed(seed),
@@ -92,7 +92,7 @@ def get_loaders(config: CfgNode) -> tuple:
 
     outlier_valid_queue = torch.utils.data.DataLoader(
         outlier_valid_data,
-        batch_size=1,
+        batch_size=batch_size,
         pin_memory=True,
         num_workers=0,
         worker_init_fn=np.random.seed(seed),
@@ -476,6 +476,11 @@ if __name__ == "__main__":
         meta_transform,
         valid_transform,
     ) = load_dataset(config)
+    print(len(train_queue))
+    print(len(meta_queue))
+    print(len(valid_queue))
+    print(len(outlier_valid_queue))
+    print(len(test_queue))
     for batch in train_queue:
         image, label = batch
         print(image.shape)

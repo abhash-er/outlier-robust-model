@@ -3,6 +3,9 @@ from __future__ import annotations
 from abc import ABC
 import argparse
 import logging
+import os
+import sys
+import time
 
 from betty.configs import Config, EngineConfig  # type: ignore
 from betty.engine import Engine  # type: ignore
@@ -18,13 +21,25 @@ from orm.models import (  # type: ignore
 )
 from orm.utils import (
     AverageMeter,
-    get_config_from_args,
+    get_config_from_file,
 )
 from orm.utils.dataset import load_dataset
 
 
-def get_other_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Experiment- CIFAR10")
+class ArgparseLogger(argparse.ArgumentParser):
+    def error(self, message: str) -> None:  # type: ignore
+        logging.error(message)
+        super().error(message)
+
+
+def get_parser() -> argparse.ArgumentParser:
+    parser = ArgparseLogger(description="Standard Training for modified CIFAR10")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=100,
+        help="random seed",
+    )
     parser.add_argument("--lr", type=float, default=1e-3, help="learning rate")
     parser.add_argument(
         "--eta-min",
@@ -33,13 +48,25 @@ def get_other_args() -> argparse.Namespace:
         help="minimum learning rate for the scheduler",
     )
     parser.add_argument(
-        "--weight-decay", type=float, default=1e-5, help="optimizer: weight decay"
+        "--train_problem_weight_decay",
+        type=float,
+        default=1e-5,
+        help="train problem optimizer: weight decay",
+    )
+    parser.add_argument(
+        "--meta_problem_weight_decay",
+        type=float,
+        default=1e-3,
+        help="meta problem optimizer: weight decay",
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=20,
+        help="number of epochs to run the model",
     )
 
-    return parser.parse_args()
-
-
-args = get_other_args()
+    return parser
 
 
 class MyTrainProblem(TrainProblem, ABC):
@@ -55,7 +82,8 @@ class MyTrainProblem(TrainProblem, ABC):
 
     def configure_optimizer(self) -> torch.optim.Optimizer:
         optimizer = torch.optim.Adam(
-            self.module.parameters(), lr=0.01, weight_decay=args.weight_decay
+            self.module.parameters(),
+            lr=0.01,
         )
         return optimizer
 
@@ -79,7 +107,8 @@ class MyMetaProblem(MetaProblem, ABC):
 
     def configure_optimizer(self) -> torch.optim.Optimizer:
         optimizer = torch.optim.Adam(
-            self.module.parameters(), lr=0.01, weight_decay=args.weight_decay
+            self.module.parameters(),
+            lr=0.01,
         )
         return optimizer
 
@@ -91,20 +120,40 @@ class MyMetaProblem(MetaProblem, ABC):
 
 
 def setup_logging() -> logging.Logger:
-    logging.basicConfig(
-        filename="logs/cifar10_run.log", encoding="utf-8", level=logging.INFO
-    )
+    ct = time.strftime("%Y-%d-%h-%H:%M:%S", time.gmtime(time.time()))
+    filename = f"logs/{ct}/cifar10_orm_run.log"
+    if not os.path.exists(filename):
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+
     logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
+
+    file_handler = logging.FileHandler(filename)
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setLevel(logging.DEBUG)
+    stdout_handler.setFormatter(formatter)
+
+    logger.addHandler(file_handler)
+    logger.addHandler(stdout_handler)
     return logger
 
 
 if __name__ == "__main__":
     # Get the dataset and splits
-    parser = argparse.ArgumentParser("ORM Searh for modified CIFAR10", add_help=False)
-    parser.add_argument("--seed", default=444, type=int)
-    parser_args = parser.parse_args()
     logger = setup_logging()
-    config = get_config_from_args(logger=logger)
+    config = get_config_from_file(logger=logger)
+    parser = get_parser()
+
+    try:
+        args = parser.parse_args(sys.argv[1:])  # type: ignore
+    except:
+        print("Error handling arguments")
+        raise
+
     (
         train_queue,
         meta_queue,
@@ -120,12 +169,12 @@ if __name__ == "__main__":
     train_loss_meter = AverageMeter()
     val_loss_meter = AverageMeter()
 
-    device = "cpu"
+    device = "cuda"
     trainer_config = Config(type="darts", unroll_steps=1)
     wandb_log = False
 
     if wandb_log:
-        wandb.init(project="OrmModel")  # type: ignore
+        wandb.init(project="OrmModel", group="orm_run", config=config)  # type: ignore
 
     trainer_problem = MyTrainProblem(
         name="train_learner",

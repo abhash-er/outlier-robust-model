@@ -27,6 +27,7 @@ class TrainProblem(ImplicitProblem):
         device: str | None = None,
         loss_meter: AverageMeter = None,
         is_wandb_log: bool = False,
+        logger: logging.Logger | None = None,
     ) -> None:
         super().__init__(
             name, config, module, optimizer, scheduler, train_data_loader, device
@@ -36,6 +37,7 @@ class TrainProblem(ImplicitProblem):
         self.step_num = 0
         self.epoch_num = 0
         self.is_wandb_log = is_wandb_log
+        self.logger = logger
 
     @abc.abstractmethod
     def loss_function(
@@ -50,13 +52,15 @@ class TrainProblem(ImplicitProblem):
 
     def training_step(self, batch: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         self.module.train()
+        self.meta_learner.module.train()
         images, labels = batch
         outputs = self.forward(images)
         weights = self.meta_learner(images, labels)
-
+        # print(weights)
+        # sleep(5)
         # Use categorical loss function type
         loss = self.loss_function(labels, outputs)
-        loss = torch.dot(weights.squeeze(-1), loss).mean()
+        loss = torch.dot(weights, loss).mean()
         self.train_loss_meter.update(loss.item())
         self.train_loss_meter.save()
         self.step_num += 1
@@ -67,11 +71,12 @@ class TrainProblem(ImplicitProblem):
                 )
                 wandb.log({"train/epochs": self.epoch_num})  # type: ignore
 
-            logging.info(
-                f"[TrainProblem] Epoch {self.epoch_num}: \
-                    Training loss is {self.train_loss_meter.avg}"
+            self.logger.info(  # type: ignore
+                f"[TrainProblem] Epoch {self.epoch_num}: "
+                + f"Training loss is {self.train_loss_meter.avg}"
             )
             self.epoch_num += 1
+            self.train_loss_meter.reset()
         # logging.info(
         #     f"[Train Problem]: train/step: {self.step_num}, train/loss: \
         #              {self.train_loss_meter.avg}"
@@ -110,6 +115,7 @@ class MetaProblem(ImplicitProblem):
         device: str | None = None,
         loss_meter: AverageMeter = AverageMeter(),  # noqa: B008
         is_wandb_log: bool = False,
+        logger: logging.Logger | None = None,
     ):
         super().__init__(
             name, config, module, optimizer, scheduler, train_data_loader, device
@@ -122,6 +128,7 @@ class MetaProblem(ImplicitProblem):
         self.epoch_num = 0
         self.loader_len = len(train_data_loader)  # type: ignore
         self.is_wandb_log = is_wandb_log
+        self.logger = logger
 
     @abc.abstractmethod
     def loss_function(
@@ -140,6 +147,7 @@ class MetaProblem(ImplicitProblem):
 
     def training_step(self, batch: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         self.module.train()
+        self.train_learner.module.train()
         images, labels = batch
         output = self.train_learner(images)
         loss = self.loss_function(labels, output)
@@ -147,9 +155,9 @@ class MetaProblem(ImplicitProblem):
         self.meta_loss_meter.save()
         self.step_num += 1
         if self.step_num % self.loader_len == 0:
-            logging.info(
-                f"[MetaProblem] Epoch {self.epoch_num}: Training Loss is \
-                    {self.meta_loss_meter.avg}"
+            self.logger.info(  # type: ignore
+                f"[MetaProblem] Epoch {self.epoch_num}: Training Loss is "
+                + f"{self.meta_loss_meter.avg}"
             )
             if self.is_wandb_log:
                 wandb.log(  # type: ignore
@@ -157,6 +165,7 @@ class MetaProblem(ImplicitProblem):
                 )
             self.log_validate()
             self.epoch_num += 1
+            self.meta_loss_meter.reset()
         if self.is_wandb_log:
             log_dict = {
                 "meta/step": self.step_num,
@@ -168,6 +177,7 @@ class MetaProblem(ImplicitProblem):
     # FIXME Update the validate function to do something better
     def validate(self) -> tuple[float, float]:
         self.train_learner.module.eval()
+        self.module.eval()
         assert self.val_data_loader is not None
         with torch.no_grad():
             for batch in self.val_data_loader:
@@ -207,9 +217,9 @@ class MetaProblem(ImplicitProblem):
                     }
                 )
 
-            logging.info(
-                f"[MetaProblem] Epoch {self.epoch_num} -- validation loss is \
-                {val_loss},validation accuracy is {val_acc}"
+            self.logger.info(  # type: ignore
+                f"[MetaProblem] Epoch {self.epoch_num} -- validation loss is"
+                + f" {val_loss} and validation accuracy is {val_acc}"
             )
             if self.is_wandb_log:
                 wandb.log(log_dict)  # type: ignore
@@ -275,8 +285,11 @@ class OutlierDetectionModel(torch.nn.Module):
             torch.nn.Linear(
                 in_features=hidden_layer_size * 2, out_features=hidden_layer_size
             ),
-            torch.nn.Linear(in_features=hidden_layer_size, out_features=1),
-            torch.nn.Sigmoid(),
+            torch.nn.Linear(
+                in_features=hidden_layer_size,
+                out_features=10,
+            ),
+            torch.nn.Softmax(dim=1),
         )
 
     def forward(self, images: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
@@ -287,7 +300,8 @@ class OutlierDetectionModel(torch.nn.Module):
             ).float()
         label_enc = self.label_encoder(labels)
         full_enc = torch.cat((image_enc, label_enc), -1)
-        return self.final_layer(full_enc)  # type: ignore
+        score = self.final_layer(full_enc)
+        return torch.max(score, -1).values  # type: ignore  # noqa: PD011
 
 
 if __name__ == "__main__":
